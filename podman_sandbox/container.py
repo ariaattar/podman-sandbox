@@ -14,6 +14,7 @@ class PodmanContainer:
     CONFIG_FILE = CONFIG_DIR / "config.json"
     CONTAINER_NAME = "podman-sandbox"
     DEFAULT_IMAGE = "alpine:latest"
+    COMMITTED_IMAGE = "localhost/podman-sandbox:committed"
 
     def __init__(self):
         self.config = self._load_config()
@@ -26,6 +27,7 @@ class PodmanContainer:
         return {
             "memory_limit": None,
             "image": self.DEFAULT_IMAGE,
+            "auto_commit": False,
         }
 
     def _save_config(self):
@@ -34,12 +36,14 @@ class PodmanContainer:
         with open(self.CONFIG_FILE, "w") as f:
             json.dump(self.config, f, indent=2)
 
-    def configure(self, memory_limit: Optional[str] = None, image: Optional[str] = None):
+    def configure(self, memory_limit: Optional[str] = None, image: Optional[str] = None, auto_commit: Optional[bool] = None):
         """Configure container settings."""
-        if memory_limit:
+        if memory_limit is not None:
             self.config["memory_limit"] = memory_limit
-        if image:
+        if image is not None:
             self.config["image"] = image
+        if auto_commit is not None:
+            self.config["auto_commit"] = auto_commit
         self._save_config()
 
     def is_running(self) -> bool:
@@ -108,6 +112,24 @@ class PodmanContainer:
         except subprocess.CalledProcessError:
             return False
 
+    def _committed_image_exists(self) -> bool:
+        """Check if a committed image exists."""
+        try:
+            result = subprocess.run(
+                ["podman", "image", "exists", self.COMMITTED_IMAGE],
+                capture_output=True,
+                check=False,
+            )
+            return result.returncode == 0
+        except subprocess.CalledProcessError:
+            return False
+
+    def _get_image_to_use(self) -> str:
+        """Determine which image to use: committed if it exists, otherwise base image."""
+        if self._committed_image_exists():
+            return self.COMMITTED_IMAGE
+        return self.config["image"]
+
     def start(self, force_restart: bool = False):
         """Start the sandbox container.
 
@@ -147,7 +169,7 @@ class PodmanContainer:
             "podman", "run",
             "-d",  # Detached mode
             "--name", self.CONTAINER_NAME,
-            "-v", f"{current_dir}:/workspace:Z",  # Mount current directory
+            "-v", f"{current_dir}:/workspace",  # Mount current directory (rootless-friendly)
             "-w", "/workspace",  # Set working directory
         ]
 
@@ -155,22 +177,39 @@ class PodmanContainer:
         if self.config.get("memory_limit"):
             cmd.extend(["-m", self.config["memory_limit"]])
 
-        # Add image and keep container running
-        cmd.extend([self.config["image"], "sleep", "infinity"])
+        # Use committed image if it exists, otherwise use configured image
+        image_to_use = self._get_image_to_use()
+        cmd.extend([image_to_use, "sleep", "infinity"])
 
         # Start container
         subprocess.run(cmd, capture_output=True, check=True)
 
-    def stop(self):
-        """Stop the sandbox container."""
+    def stop(self, skip_commit: bool = False):
+        """Stop the sandbox container.
+
+        Args:
+            skip_commit: If True, skip auto-commit even if enabled in config
+        """
         if not self.is_running():
             raise RuntimeError(f"Container '{self.CONTAINER_NAME}' is not running")
+
+        # Auto-commit if enabled in config
+        committed = False
+        if self.config.get("auto_commit", False) and not skip_commit:
+            try:
+                self.commit()
+                committed = True
+            except Exception:
+                # Don't fail stop if commit fails, just skip it
+                pass
 
         subprocess.run(
             ["podman", "stop", self.CONTAINER_NAME],
             capture_output=True,
             check=True,
         )
+
+        return committed
 
     def execute(self, command: str, interactive: bool = False, auto_restart: bool = True) -> subprocess.CompletedProcess:
         """Execute a command in the sandbox container.
@@ -204,14 +243,15 @@ class PodmanContainer:
                 "podman", "run",
                 "-d",
                 "--name", self.CONTAINER_NAME,
-                "-v", f"{current_dir}:/workspace:Z",
+                "-v", f"{current_dir}:/workspace",
                 "-w", "/workspace",
             ]
 
             if self.config.get("memory_limit"):
                 restart_cmd.extend(["-m", self.config["memory_limit"]])
 
-            restart_cmd.extend([self.config["image"], "sleep", "infinity"])
+            image_to_use = self._get_image_to_use()
+            restart_cmd.extend([image_to_use, "sleep", "infinity"])
 
             subprocess.run(restart_cmd, capture_output=True, check=True)
 
@@ -285,3 +325,90 @@ class PodmanContainer:
             return containers
         except subprocess.CalledProcessError:
             return []
+
+    def commit(self) -> str:
+        """Commit the current container state to an image.
+
+        Returns:
+            The name of the committed image
+
+        Raises:
+            RuntimeError: If container is not running or commit fails
+        """
+        if not self.is_running():
+            raise RuntimeError(f"Container '{self.CONTAINER_NAME}' is not running")
+
+        try:
+            # If old committed image exists, we need to remove it first
+            # But we can't remove it if a container is using it, so we remove containers first
+            if self._committed_image_exists():
+                # Find all containers using the committed image
+                result = subprocess.run(
+                    ["podman", "ps", "-a", "--filter", f"ancestor={self.COMMITTED_IMAGE}", "--format", "{{.Names}}"],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+
+                # Remove containers using the old committed image (except the current one)
+                for container_name in result.stdout.strip().split("\n"):
+                    if container_name and container_name != self.CONTAINER_NAME:
+                        subprocess.run(
+                            ["podman", "rm", "-f", container_name],
+                            capture_output=True,
+                            check=False,
+                        )
+
+                # Now remove the old committed image
+                subprocess.run(
+                    ["podman", "rmi", "-f", self.COMMITTED_IMAGE],
+                    capture_output=True,
+                    check=False,  # Don't fail if image can't be removed
+                )
+
+            # Commit current container state
+            subprocess.run(
+                ["podman", "commit", self.CONTAINER_NAME, self.COMMITTED_IMAGE],
+                capture_output=True,
+                check=True,
+            )
+            return self.COMMITTED_IMAGE
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(f"Failed to commit container: {e}")
+
+    def reset(self) -> bool:
+        """Remove the committed image and revert to base image.
+
+        Returns:
+            True if reset was successful, False if no committed image existed
+
+        Raises:
+            RuntimeError: If reset fails
+        """
+        if not self._committed_image_exists():
+            return False
+
+        try:
+            # If container exists (even if stopped), remove it first
+            # because it references the committed image
+            if self.exists():
+                subprocess.run(
+                    ["podman", "rm", "-f", self.CONTAINER_NAME],
+                    capture_output=True,
+                    check=True,
+                )
+
+            # Now remove the committed image
+            result = subprocess.run(
+                ["podman", "rmi", self.COMMITTED_IMAGE],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            if result.returncode != 0:
+                raise RuntimeError(f"Failed to remove image: {result.stderr}")
+
+            return True
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(f"Failed to reset: {e}")

@@ -6,6 +6,8 @@ A lightweight CLI tool for sandboxing code execution in Podman containers.
 
 - **Easy container management**: Start/stop sandbox containers with simple commands
 - **Execute code safely**: Run commands and scripts in isolated containers
+- **Persistent state**: Commit container state to preserve installed packages across restarts
+- **Rootless mode**: Run containers without root privileges for better security
 - **Resource limits**: Configure memory limits for sandboxed execution
 - **Automatic mounting**: Your current directory is automatically mounted into the container
 - **Multiple image support**: Use any container image (Alpine, Python, Node.js, etc.)
@@ -90,6 +92,47 @@ This shows all Podman containers and marks which one is being used as the sandbo
 podman-sandbox stop
 ```
 
+### 7. Persist installed packages (NEW!)
+
+By default, packages installed in the container disappear when you restart. You have two options to make them persist:
+
+#### Option 1: Manual commit (default)
+
+```bash
+# Install packages
+podman-sandbox execute "pip install uv"
+podman-sandbox execute "apk add git curl"
+
+# Save the container state
+podman-sandbox commit
+
+# Now packages persist across restarts!
+podman-sandbox stop
+podman-sandbox start
+podman-sandbox execute "uv --version"  # ✓ Still works!
+
+# To go back to a fresh container
+podman-sandbox reset
+```
+
+#### Option 2: Auto-commit (recommended for convenience)
+
+Enable auto-commit to automatically save state when stopping:
+
+```bash
+# Enable auto-commit once
+podman-sandbox configure --auto-commit
+
+# Now you don't need to manually commit!
+podman-sandbox execute "pip install uv"
+podman-sandbox stop  # ✓ Automatically commits before stopping!
+podman-sandbox start
+podman-sandbox execute "uv --version"  # ✓ Still works!
+
+# Disable auto-commit if needed
+podman-sandbox configure --no-auto-commit
+```
+
 ## Usage Examples
 
 ### Basic command execution
@@ -118,14 +161,18 @@ podman-sandbox configure --image python:3.11-alpine
 podman-sandbox execute "python examples/helloworld.py"
 ```
 
-### Using with uv (Python package manager)
+### Persisting packages across restarts
 
 ```bash
-# Configure with a Python image that has uv
-podman-sandbox configure --image python:3.11-alpine
+# Install uv once
+podman-sandbox execute "pip install uv"
 
-# Install uv in the container and run a script
-podman-sandbox execute "pip install uv && uv run helloworld.py"
+# Save the state so uv persists
+podman-sandbox commit
+
+# Now uv is available even after restart!
+podman-sandbox stop && podman-sandbox start
+podman-sandbox execute "uv run helloworld.py"
 ```
 
 ### Memory limits
@@ -175,6 +222,8 @@ Configure sandbox settings. Automatically restarts the container if it's running
 Options:
 - `--memory, -m LIMIT`: Set memory limit (e.g., '512m', '1g')
 - `--image IMAGE`: Set container image
+- `--auto-commit`: Enable auto-commit (automatically save state on stop)
+- `--no-auto-commit`: Disable auto-commit
 - `--show`: Show current configuration
 - `--no-restart`: Don't automatically restart the container
 
@@ -185,6 +234,32 @@ Show current status of the sandbox container and configuration.
 ### `podman-sandbox list`
 
 List all Podman containers and identify which one is being used as the sandbox.
+
+### `podman-sandbox commit`
+
+Save the current container state to preserve installed packages and modifications.
+
+**Important:** This is required for packages to persist across container restarts!
+
+Example:
+```bash
+podman-sandbox execute "pip install uv"
+podman-sandbox commit  # Save the state
+podman-sandbox stop && podman-sandbox start
+podman-sandbox execute "uv --version"  # ✓ Still works!
+```
+
+### `podman-sandbox reset`
+
+Remove the saved container state and revert to the base image.
+
+After running this, the next container start will use a fresh base image without any installed packages.
+
+Example:
+```bash
+podman-sandbox reset  # Remove saved state
+podman-sandbox start  # Fresh container
+```
 
 ## Configuration
 
