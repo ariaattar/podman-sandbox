@@ -23,11 +23,11 @@ def start(image):
 
     try:
         container.start()
-        click.echo(f"✓ Sandbox container started successfully")
-        click.echo(f"  Image: {container.config['image']}")
-        click.echo(f"  Working directory: /workspace (mounted from {container.CONFIG_DIR.parent.parent})")
+        click.echo(click.style("✓ Sandbox container started successfully", fg='green', bold=True))
+        click.echo(f"  Image: {click.style(container.config['image'], fg='blue')}")
+        click.echo(f"  Working directory: {click.style('/workspace', fg='cyan')} (mounted from {container.CONFIG_DIR.parent.parent})")
         if container.config.get("memory_limit"):
-            click.echo(f"  Memory limit: {container.config['memory_limit']}")
+            click.echo(f"  Memory limit: {click.style(container.config['memory_limit'], fg='cyan')}")
     except RuntimeError as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
@@ -43,7 +43,7 @@ def stop():
 
     try:
         container.stop()
-        click.echo("✓ Sandbox container stopped successfully")
+        click.echo(click.style("✓ Sandbox container stopped successfully", fg='green', bold=True))
     except RuntimeError as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
@@ -61,9 +61,9 @@ def execute(command, interactive):
     The container automatically starts if not running and remounts if you've changed directories.
 
     Examples:
-        podman-sandbox execute "ls -la"
-        podman-sandbox execute "python helloworld.py"
-        podman-sandbox execute -i "bash"
+        sandbox execute "ls -la"
+        sandbox execute "python helloworld.py"
+        sandbox execute -i "bash"
     """
     container = PodmanContainer()
 
@@ -73,16 +73,16 @@ def execute(command, interactive):
 
         # Auto-start if not running
         if not container.is_running():
-            click.echo("Container not running, starting...")
+            click.echo(click.style("Container not running, starting...", fg='yellow'))
             container.start()
             click.echo("")
 
         # Check if we need to restart for directory change
         mounted_dir = container.get_mounted_directory()
         if mounted_dir and mounted_dir != current_dir and container.is_running():
-            click.echo(f"Directory changed, restarting container...")
-            click.echo(f"  Old: {mounted_dir}")
-            click.echo(f"  New: {current_dir}")
+            click.echo(click.style("Directory changed, restarting container...", fg='yellow'))
+            click.echo(f"  Old: {click.style(mounted_dir, fg='red')}")
+            click.echo(f"  New: {click.style(current_dir, fg='green')}")
 
         result = container.execute(command, interactive=interactive)
         sys.exit(result.returncode)
@@ -103,16 +103,16 @@ def configure(memory, image, show, no_restart):
     """Configure sandbox container settings.
 
     Examples:
-        podman-sandbox configure --memory 512m
-        podman-sandbox configure --image python:3.11-alpine
-        podman-sandbox configure --show
+        sandbox configure --memory 512m
+        sandbox configure --image python:3.11-alpine
+        sandbox configure --show
     """
     container = PodmanContainer()
 
     if show:
-        click.echo("Current configuration:")
-        click.echo(f"  Image: {container.config['image']}")
-        click.echo(f"  Memory limit: {container.config.get('memory_limit') or 'unlimited'}")
+        click.echo(click.style("Current configuration:", bold=True))
+        click.echo(f"  Image: {click.style(container.config['image'], fg='blue')}")
+        click.echo(f"  Memory limit: {click.style(container.config.get('memory_limit') or 'unlimited', fg='blue')}")
         return
 
     if not memory and not image:
@@ -136,23 +136,23 @@ def configure(memory, image, show, no_restart):
             "memory_limit": container.config.get('memory_limit') or 'unlimited'
         }
 
-        # Display pretty diff
-        click.echo("Configuration changes:")
+        # Display pretty diff with colors
+        click.echo(click.style("Configuration changes:", bold=True))
         click.echo("")
 
         if old_config['image'] != new_config['image']:
-            click.echo(f"  Image:")
-            click.echo(f"    - {old_config['image']}")
-            click.echo(f"    + {new_config['image']}")
+            click.echo(f"  {click.style('Image:', bold=True)}")
+            click.echo(f"    {click.style('-', fg='red')} {click.style(old_config['image'], fg='red')}")
+            click.echo(f"    {click.style('+', fg='green')} {click.style(new_config['image'], fg='green')}")
         else:
-            click.echo(f"  Image: {new_config['image']} (unchanged)")
+            click.echo(f"  Image: {click.style(new_config['image'], fg='blue')} {click.style('(unchanged)', fg='bright_black')}")
 
         if old_config['memory_limit'] != new_config['memory_limit']:
-            click.echo(f"  Memory limit:")
-            click.echo(f"    - {old_config['memory_limit']}")
-            click.echo(f"    + {new_config['memory_limit']}")
+            click.echo(f"  {click.style('Memory limit:', bold=True)}")
+            click.echo(f"    {click.style('-', fg='red')} {click.style(old_config['memory_limit'], fg='red')}")
+            click.echo(f"    {click.style('+', fg='green')} {click.style(new_config['memory_limit'], fg='green')}")
         else:
-            click.echo(f"  Memory limit: {new_config['memory_limit']} (unchanged)")
+            click.echo(f"  Memory limit: {click.style(new_config['memory_limit'], fg='blue')} {click.style('(unchanged)', fg='bright_black')}")
 
         click.echo("")
 
@@ -160,25 +160,25 @@ def configure(memory, image, show, no_restart):
         was_running = container.is_running()
 
         if was_running and not no_restart:
-            click.echo("Restarting container to apply changes...")
+            click.echo(click.style("Restarting container to apply changes...", fg='yellow'))
             try:
                 container.stop()
-                click.echo("  ✓ Container stopped")
+                click.echo(f"  {click.style('✓', fg='green')} Container stopped")
                 container.start()
-                click.echo("  ✓ Container started with new configuration")
+                click.echo(f"  {click.style('✓', fg='green')} Container started with new configuration")
                 click.echo("")
-                click.echo("Configuration applied successfully!")
+                click.echo(click.style("Configuration applied successfully!", fg='green', bold=True))
             except Exception as e:
-                click.echo(f"  ✗ Failed to restart: {e}", err=True)
-                click.echo("  Run 'podman-sandbox stop && podman-sandbox start' manually")
+                click.echo(f"  {click.style('✗', fg='red')} Failed to restart: {e}", err=True)
+                click.echo("  Run 'sandbox stop && sandbox start' manually")
                 sys.exit(1)
         elif was_running and no_restart:
-            click.echo("Container is running but --no-restart was specified.")
+            click.echo(click.style("Container is running but --no-restart was specified.", fg='yellow'))
             click.echo("Restart manually to apply changes:")
-            click.echo("  podman-sandbox stop && podman-sandbox start")
+            click.echo(f"  {click.style('sandbox stop && sandbox start', fg='cyan')}")
         else:
-            click.echo("Container is not running. Start it to use the new configuration:")
-            click.echo("  podman-sandbox start")
+            click.echo(click.style("Container is not running.", fg='yellow') + " Start it to use the new configuration:")
+            click.echo(f"  {click.style('sandbox start', fg='cyan')}")
 
     except Exception as e:
         click.echo(f"Failed to update configuration: {e}", err=True)
@@ -192,18 +192,28 @@ def status():
 
     try:
         info = container.status()
-        click.echo("Sandbox container status:")
-        click.echo(f"  Status: {info['status']}")
-        click.echo(f"  Running: {'yes' if info['running'] else 'no'}")
+        click.echo(click.style("Sandbox container status:", bold=True))
+
+        # Color status based on running state
+        status_text = info['status']
+        if info['running']:
+            status_color = 'green'
+            running_color = 'green'
+        else:
+            status_color = 'yellow'
+            running_color = 'red'
+
+        click.echo(f"  Status: {click.style(status_text, fg=status_color)}")
+        click.echo(f"  Running: {click.style('yes' if info['running'] else 'no', fg=running_color)}")
 
         if info.get("started_at"):
-            click.echo(f"  Started at: {info['started_at']}")
+            click.echo(f"  Started at: {click.style(info['started_at'], fg='cyan')}")
         if info.get("memory_limit"):
-            click.echo(f"  Memory limit: {info['memory_limit']}")
+            click.echo(f"  Memory limit: {click.style(info['memory_limit'], fg='cyan')}")
 
-        click.echo(f"\nConfiguration:")
-        click.echo(f"  Image: {container.config['image']}")
-        click.echo(f"  Memory limit: {container.config.get('memory_limit') or 'unlimited'}")
+        click.echo(f"\n{click.style('Configuration:', bold=True)}")
+        click.echo(f"  Image: {click.style(container.config['image'], fg='blue')}")
+        click.echo(f"  Memory limit: {click.style(container.config.get('memory_limit') or 'unlimited', fg='blue')}")
     except Exception as e:
         click.echo(f"Failed to get status: {e}", err=True)
         sys.exit(1)
@@ -218,17 +228,20 @@ def list():
         containers = container.list_all_containers()
 
         if not containers:
-            click.echo("No containers found.")
+            click.echo(click.style("No containers found.", fg='yellow'))
             return
 
-        click.echo("All Podman containers:")
+        click.echo(click.style("All Podman containers:", bold=True))
         click.echo("")
 
         for c in containers:
-            marker = " [SANDBOX]" if c["is_sandbox"] else ""
-            click.echo(f"  {c['name']}{marker}")
-            click.echo(f"    Image:   {c['image']}")
-            click.echo(f"    Status:  {c['status']}")
+            marker = f" {click.style('[SANDBOX]', fg='green', bold=True)}" if c["is_sandbox"] else ""
+            click.echo(f"  {click.style(c['name'], fg='cyan', bold=True)}{marker}")
+            click.echo(f"    Image:   {click.style(c['image'], fg='blue')}")
+
+            # Color status based on state
+            status_color = 'green' if 'running' in c['status'].lower() else 'yellow'
+            click.echo(f"    Status:  {click.style(c['status'], fg=status_color)}")
             click.echo(f"    Created: {c['created']}")
             click.echo("")
 

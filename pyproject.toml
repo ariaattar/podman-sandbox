@@ -8,7 +8,7 @@ dependencies = [
 ]
 
 [project.scripts]
-podman-sandbox = "podman_sandbox.cli:main"
+sandbox = "podman_sandbox.cli:main"
 
 [build-system]
 requires = ["hatchling"]

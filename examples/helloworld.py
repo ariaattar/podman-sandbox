@@ -1,12 +1,22 @@
 #!/usr/bin/env python3
-"""A simple hello world script to test podman-sandbox."""
+"""Script to deliberately exhaust memory to test podman-sandbox memory limit (512MB)."""
 
-print("Hello from the sandbox!")
-print("This Python script is running inside a Podman container.")
+import sys
 
-# Show we can access the filesystem
-import os
-print(f"\nCurrent directory: {os.getcwd()}")
-print(f"Files in current directory:")
-for item in os.listdir("."):
-    print(f"  - {item}")
+print("Memory stress test: Attempting to allocate lots of memory inside the sandbox...", flush=True)
+
+mem_chunks = []
+try:
+    i = 0
+    while True:
+        # Allocate 10MB per step, so we hit 512MB quickly.
+        mem_chunks.append(bytearray(10 * 1024 * 1024))
+        i += 1
+        if i % 10 == 0:
+            print(f"Allocated {i*10}MB so far...", flush=True)
+except MemoryError:
+    print("MemoryError caught! The sandbox memory limit was reached.", flush=True)
+    print(f"Stopped after allocating approximately {i*10}MB.", flush=True)
+    sys.exit(42)
+
+print("Finished without hitting the memory limit? This is unexpected!")
